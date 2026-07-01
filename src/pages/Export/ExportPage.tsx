@@ -6,7 +6,7 @@
  */
 
 import { memo, useEffect, useState, useCallback } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import ExportTopBar from './components/ExportTopBar'
 import SessionTable from './components/SessionTable'
 import ExportDialog from './components/ExportDialog'
@@ -28,18 +28,26 @@ import { AutomationTaskForm } from './components/Automation/AutomationTaskForm'
 
 import type { SessionRow } from './types'
 import { getSelectionScopeFromRows, resolveScopeDisplayNames } from './utils/session'
+import {
+  emitSingleExportDialogStatus,
+  onOpenSingleExport,
+  type OpenSingleExportPayload
+} from '../../services/exportBridge'
 import './ExportPage.scss'
 
 function ExportPage() {
   const location = useLocation()
+  const navigate = useNavigate()
   const isExportRoute = location.pathname === '/export'
 
   const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(new Set())
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
   const [isAutomationModalOpen, setIsAutomationModalOpen] = useState(false)
   const [draftAutomationPayload, setDraftAutomationPayload] = useState<any>(null)
+  const [pendingSingleExportRequest, setPendingSingleExportRequest] = useState<OpenSingleExportPayload | null>(null)
 
   const { 
+    isLoaded: isConfigLoaded,
     options, 
     updateOptions,
     exportPath,
@@ -63,6 +71,7 @@ function ExportPage() {
   const { metricsMap, fetchMetrics } = useSessionMetrics()
 
   const {
+    sessions,
     filteredSessions,
     isLoading: isSessionsLoading,
     activeTab,
@@ -114,6 +123,13 @@ function ExportPage() {
 
   // ── 4. Dialog & Exports ──
   const { dialogState, openDialog, closeDialog } = useExportDialog()
+
+  const resolveSingleExportName = useCallback((payload: OpenSingleExportPayload) => {
+    const sessionId = String(payload.sessionId || '').trim()
+    const payloadName = typeof payload.sessionName === 'string' ? payload.sessionName.trim() : ''
+    const sessionRow = sessions.find(s => s.username === sessionId)
+    return payloadName || sessionRow?.displayName || sessionRow?.remark || sessionRow?.nickname || sessionId
+  }, [sessions])
 
   const handleExportDefaultsChanged = useCallback((patch: ExportDefaultsSettingsPatch) => {
     updateOptions({
@@ -170,6 +186,58 @@ function ExportPage() {
       title: '导出联系人/群聊'
     })
   }, [displayedSessions, options.displayNamePreference, openDialog])
+
+  const handleOpenSingleExportRequest = useCallback((payload: OpenSingleExportPayload) => {
+    const requestId = typeof payload?.requestId === 'string' ? payload.requestId.trim() : ''
+    const sessionId = typeof payload?.sessionId === 'string' ? payload.sessionId.trim() : ''
+
+    if (!requestId || !sessionId) {
+      if (requestId) {
+        emitSingleExportDialogStatus({
+          requestId,
+          status: 'failed',
+          message: '无法打开导出配置：缺少会话信息'
+        })
+      }
+      return
+    }
+
+    emitSingleExportDialogStatus({ requestId, status: 'initializing' })
+
+    if (!isConfigLoaded) {
+      setPendingSingleExportRequest({
+        ...payload,
+        requestId,
+        sessionId
+      })
+      return
+    }
+
+    const sessionName = resolveSingleExportName(payload)
+    setSelectedSessionIds(new Set([sessionId]))
+    setActiveTab(sessionId.includes('@chatroom') ? 'group' : 'private')
+    navigate('/export')
+
+    openDialog({
+      intent: 'manual',
+      scope: 'single',
+      sessionIds: [sessionId],
+      sessionNames: [sessionName],
+      title: `导出: ${sessionName}`
+    })
+
+    emitSingleExportDialogStatus({ requestId, status: 'opened' })
+  }, [isConfigLoaded, navigate, openDialog, resolveSingleExportName, setActiveTab])
+
+  useEffect(() => {
+    return onOpenSingleExport(handleOpenSingleExportRequest)
+  }, [handleOpenSingleExportRequest])
+
+  useEffect(() => {
+    if (!isConfigLoaded || !pendingSingleExportRequest) return
+    setPendingSingleExportRequest(null)
+    handleOpenSingleExportRequest(pendingSingleExportRequest)
+  }, [handleOpenSingleExportRequest, isConfigLoaded, pendingSingleExportRequest])
 
   const handleConfirmExport = useCallback((finalOptions: any) => {
     startTask({
