@@ -9215,9 +9215,12 @@ class ChatService {
           const t6 = Date.now()
 
 
-          if (result.success && result.transcript) {
-
-            this.cacheVoiceTranscript(cacheKey, result.transcript)
+          if (result.success) {
+            const transcript = String(result.transcript || '').trim()
+            if (transcript) {
+              this.cacheVoiceTranscript(cacheKey, transcript)
+            }
+            return { success: true, transcript }
           } else {
             console.error(`[Transcribe] 转写失败: ${result.error}`)
           }

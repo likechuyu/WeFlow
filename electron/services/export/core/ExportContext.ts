@@ -3276,8 +3276,9 @@ export class ExportContext {
     public async transcribeVoice(sessionId: string, msgId: string, createTime: number, senderWxid: string | null): Promise<string> {
         try {
           const transcript = await chatService.getVoiceTranscript(sessionId, msgId, createTime, undefined, senderWxid || undefined)
-          if (transcript.success && transcript.transcript) {
-            return `[语音转文字] ${transcript.transcript}`
+          if (transcript.success) {
+            const text = String(transcript.transcript || '').trim()
+            return text ? `[语音转文字] ${text}` : '[语音消息 - 未识别到文字]'
           }
           return `[语音消息 - 转文字失败: ${transcript.error || '未知错误'}]`
         } catch (e) {
